@@ -50,7 +50,13 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
 
             from isaaclab.app import AppLauncher
 
-            sim_app = AppLauncher(headless=True, enable_cameras=True).app
+            sim_app = AppLauncher(headless=True, enable_cameras=True, 
+                #renderer="PathTracing",
+                #samples_per_pixel_per_frame=256,
+                denoiser=True,
+                #max_bounces=4,
+            ).app #rendering_mode="quality", renderer="PathTracing",
+
             from isaaclab_tasks.utils import load_cfg_from_registry
 
             isaac_env_cfg = load_cfg_from_registry(

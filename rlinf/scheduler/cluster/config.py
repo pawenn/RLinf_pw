@@ -356,6 +356,15 @@ class ClusterConfig:
 
     def __post_init__(self):
         """Post-initialization to convert nodes dicts to their respective dataclass instances."""
+        if isinstance(self.num_nodes, str):
+            try:
+                self.num_nodes = int(self.num_nodes)
+            except ValueError:
+                pass
+        assert type(self.num_nodes) is int and self.num_nodes > 0, (
+            f"'num_nodes' must be a positive integer. But got {self.num_nodes} of type {type(self.num_nodes)}."
+        )
+
         if self.node_groups is not None:
             # Arg check
             for node_group in self.node_groups:
@@ -430,10 +439,6 @@ class ClusterConfig:
                             node_hardware_type_map[
                                 (cfg.node_rank, node_group.hardware.type)
                             ] = node_group.label
-
-        assert type(self.num_nodes) is int and self.num_nodes > 0, (
-            f"'num_nodes' must be a positive integer. But got {self.num_nodes} of type {type(self.num_nodes)}."
-        )
 
     def __str__(self) -> str:
         """String representation of the NodeInfo."""

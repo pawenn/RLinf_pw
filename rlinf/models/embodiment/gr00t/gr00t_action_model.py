@@ -11,11 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import debugpy
+import os
+import importlib.util
 import json
 import random
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
+import requests
+import json_numpy
 
 import numpy as np
 import torch
@@ -44,6 +48,16 @@ from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 
 
+
+def _load_class_from_file(module_path: str, class_name: str):
+    spec = importlib.util.spec_from_file_location(class_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module spec from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, class_name)
+
+
 class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
     def __init__(
         self,
@@ -58,19 +72,43 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         self.padding_value = rl_head_config.padding_value
         self.valid_action_dim = valid_action_dim
 
-        if self.rl_config.use_vlm_value:
+        if self.rl_config.use_seperate_critic_model:
             proj_width = 2048
         else:
             proj_width = 3584
 
-        if self.rl_config.add_value_head:
-            self.value_head = ValueHead(
-                input_dim=proj_width,
-                hidden_sizes=(1024, 512, 256),
-                output_dim=1,
-                activation="relu",
-                bias_last=True,
-            )
+        """ #if self.critic_type == "siggemma":
+        critic_module_path = getattr(self.rl_config, "critic_module_path", None)
+        critic_class_name = getattr(
+            self.rl_config, "critic_class_name", "SigGemmaVLM"
+        )
+        critic_ckpt_path = getattr(self.rl_config, "critic_ckpt_path", None)
+        critic_cls = _load_class_from_file(critic_module_path, critic_class_name)
+        
+        #critic_device = torch.device("cuda:2")
+
+        self.critic_model = critic_cls(
+            siglip_ckpt="google/siglip-so400m-patch14-384",
+            llm_id="google/gemma-2-9b-it",
+            local_files_only=True,
+            freeze_backbones=True,
+            device_map=None,
+        )
+        critic_ckpt = torch.load(critic_ckpt_path, map_location="cpu")
+        self.critic_model.load_state_dict(critic_ckpt["model"])
+        #self.critic_model.to(critic_device)
+        self.critic_model.requires_grad_(False)
+        self.critic_model.eval()
+
+        #elif self.rl_config.add_value_head: """
+        
+        self.value_head = ValueHead(
+            input_dim=proj_width,
+            hidden_sizes=(1024, 512, 256),
+            output_dim=1,
+            activation="relu",
+            bias_last=True,
+        )
 
         if self.rl_config.noise_method == "reinflow":
             self.reinflow_explore_noise_net = ExploreNoiseNet(
@@ -394,7 +432,6 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         )
 
     def get_value(self, vl_embs, state_features):
-        # TODO: add value vlm mode param
         bsize = vl_embs.shape[0]
         mask_length = vl_embs.shape[1]
         if self.rl_config.value_vlm_mode == "mean_token":
@@ -457,6 +494,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.compute_dtype = compute_dtype
         self.output_action_chunks = output_action_chunks
         self.model_path = Path(local_model_path)
+        self._critic_session: Optional[requests.Session] = None
 
         # Convert string embodiment tag to EmbodimentTag enum if needed
         if isinstance(embodiment_tag, str):
@@ -484,11 +522,75 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self._modality_transform.eval()
         super().eval()
 
+    def _get_critic_session(self) -> requests.Session:
+        if self._critic_session is None:
+            self._critic_session = requests.Session()
+            self._critic_session.trust_env = False
+        return self._critic_session
+
+    def close_critic_session(self) -> None:
+        critic_session = getattr(self, "_critic_session", None)
+        if critic_session is not None:
+            critic_session.close()
+            self._critic_session = None
+
+    def __del__(self):
+        self.close_critic_session()
+
     def _check_state_is_batched(self, obs: dict[str, Any]) -> bool:
         for k, v in obs.items():
             if "state" in k and len(v.shape) < 3:  # (B, Time, Dim)
                 return False
         return True
+
+    def get_value_from_seperate_critic_model(
+        self,
+        env_obs: dict[str, Any],
+    ) -> torch.Tensor:
+        critic_server_url = self.action_head.rl_config.critic_server_url
+        critic_request_timeout = getattr(
+            self.action_head.rl_config, "critic_request_timeout", 10.0
+        )
+
+        main_images = env_obs["main_images"]
+        wrist_images = env_obs["wrist_images"]
+        task_descriptions = env_obs["task_descriptions"]
+
+        if isinstance(main_images, torch.Tensor):
+            main_images = main_images.detach().cpu().numpy()
+        if isinstance(wrist_images, torch.Tensor):
+            wrist_images = wrist_images.detach().cpu().numpy()
+        if isinstance(task_descriptions, str):
+            task_descriptions = [task_descriptions]
+
+        values = []
+        session = self._get_critic_session()
+
+        for idx in range(len(main_images)):
+            image = np.concatenate([main_images[idx], wrist_images[idx]], axis=1)
+
+            if image.dtype != np.uint8:
+                image = np.clip(image * 255.0, 0, 255).astype(np.uint8)
+
+
+            payload = {
+                "image": image,
+                "instruction": str(task_descriptions[idx]),
+            }
+
+            response = session.post(
+                critic_server_url,
+                data=json_numpy.dumps(payload),
+                headers={"Content-Type": "application/json"},
+                timeout=critic_request_timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            #print("critic response json:", result)
+            value = result["value"]
+            values.append(float(value))
+
+        return torch.tensor(values, dtype=torch.float32)[:, None]
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
@@ -530,6 +632,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             denoise_inds=denoise_inds,
             compute_values=compute_values,
         )
+        
 
         log_probs = log_probs[
             :,
@@ -607,7 +710,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             value=0,
         )
 
-        normalized_action, result = self._get_rl_action(normalized_input, mode=mode)
+        normalized_action, result = self._get_rl_action(normalized_input, mode=mode, env_obs=env_obs,)
         unnormalized_action = self._get_unnormalized_action(normalized_action)
 
         if not is_batch:
@@ -616,7 +719,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         raw_action = self.action_convert_fn(
             unnormalized_action, chunk_size=self.output_action_chunks
         )
-
+        
         return torch.from_numpy(raw_action), result
 
     def apply_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -648,6 +751,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self,
         normalized_input: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
+        env_obs: Optional[dict[str, Any]] = None,
     ) -> torch.Tensor:
         # We expand get_action() and replace action head inference with RL inference.
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
@@ -677,9 +781,16 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[1:]
         )
 
+        if getattr(self.action_head.rl_config, "use_seperate_critic_model", False):
+            if env_obs is None:
+                raise ValueError("Separate critic requires raw `env_obs`.")
+            prev_values = self.get_value_from_seperate_critic_model(env_obs)
+        else:
+            prev_values = rlinf_outputs["prev_values"]
+
         result = {
             "prev_logprobs": rlinf_outputs["prev_logprobs"],
-            "prev_values": rlinf_outputs["prev_values"],
+            "prev_values": prev_values,
             "forward_inputs": forward_inputs,
         }
 

@@ -1,6 +1,6 @@
 defaults:
-  - env/isaaclab_stack_cube@env.train
-  - env/isaaclab_stack_cube@env.eval
+  - env/isaaclab_stack_cubes_into_box@env.train
+  - env/isaaclab_stack_cubes_into_box@env.eval
   - model/gr00t@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
@@ -39,7 +39,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "isaaclab_ppo_gr00t_demo"
+    experiment_name: "isaaclab_stack_cubes_into_box_ppo_gr00t"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1

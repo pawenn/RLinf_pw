@@ -450,6 +450,44 @@ def test_cluster_config_num_nodes_must_be_positive():
         ClusterConfig.from_dict_cfg(config)
 
 
+def test_cluster_config_accepts_numeric_string_num_nodes():
+    config = DictConfig(
+        {
+            "num_nodes": "2",
+            "component_placement": {},
+            "node_groups": [
+                {
+                    "label": "train",
+                    "node_ranks": "0-1",
+                }
+            ],
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.num_nodes == 2
+    assert cluster_cfg.node_groups[0].node_ranks == [0, 1]
+
+
+def test_cluster_config_rejects_non_numeric_string_num_nodes_before_node_groups():
+    config = DictConfig(
+        {
+            "num_nodes": "two",
+            "component_placement": {},
+            "node_groups": [
+                {
+                    "label": "train",
+                    "node_ranks": "0",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AssertionError, match="'num_nodes' must be a positive integer"):
+        ClusterConfig.from_dict_cfg(config)
+
+
 def test_path_env_merge_mode_default_is_append():
     assert (
         Cluster.DEFAULT_SYS_ENV_VAR[ClusterEnvVar.PATH_ENV_MERGE_MODE]

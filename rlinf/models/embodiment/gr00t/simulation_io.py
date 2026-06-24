@@ -25,9 +25,12 @@ def convert_libero_obs_to_gr00t_format(env_obs):
     """
     groot_obs = {}
 
+    main_images = resize_images(env_obs["main_images"], target_size=256)
+    wrist_images = resize_images(env_obs["wrist_images"], target_size=256)
+
     # [B, H, W, C] -> [B, T, H, W, C]
-    groot_obs["video.image"] = env_obs["main_images"].unsqueeze(1).numpy()
-    groot_obs["video.wrist_image"] = env_obs["wrist_images"].unsqueeze(1).numpy()
+    groot_obs["video.image"] = main_images.unsqueeze(1).numpy()
+    groot_obs["video.wrist_image"] = wrist_images.unsqueeze(1).numpy()
     # [B, 8] -> [B, T(1), 8]
     groot_obs["state.x"] = env_obs["states"].unsqueeze(1)[:, :, 0:1].numpy()
     groot_obs["state.y"] = env_obs["states"].unsqueeze(1)[:, :, 1:2].numpy()
@@ -181,6 +184,20 @@ def cut_and_resize_images(
         0, 2, 3, 1
     ).contiguous()  # [B, C, H, W] -> [B, H, W, C]
     return resized_nhwc
+
+
+def resize_images(images: torch.Tensor, target_size: int = 256) -> torch.Tensor:
+    if images.shape[-3:-1] == (target_size, target_size):
+        return images
+
+    images_nchw = images.permute(0, 3, 1, 2)
+    resized_tensor = F.interpolate(
+        images_nchw,
+        size=(target_size, target_size),
+        mode="bilinear",
+        align_corners=False,
+    )
+    return resized_tensor.permute(0, 2, 3, 1).contiguous()
 
 
 def normalize_gripper_action(action, binarize=True):
