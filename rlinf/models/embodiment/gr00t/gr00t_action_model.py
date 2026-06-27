@@ -16,6 +16,7 @@ import os
 import importlib.util
 import json
 import random
+import socket
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 import requests
@@ -495,6 +496,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         self.output_action_chunks = output_action_chunks
         self.model_path = Path(local_model_path)
         self._critic_session: Optional[requests.Session] = None
+        self._critic_client_id = f"{socket.gethostname()}:{os.getpid()}:{id(self)}"
 
         # Convert string embodiment tag to EmbodimentTag enum if needed
         if isinstance(embodiment_tag, str):
@@ -555,7 +557,8 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         main_images = env_obs["main_images"]
         wrist_images = env_obs["wrist_images"]
         task_descriptions = env_obs["task_descriptions"]
-
+        print(env_obs)
+        quit()
         if isinstance(main_images, torch.Tensor):
             main_images = main_images.detach().cpu().numpy()
         if isinstance(wrist_images, torch.Tensor):
@@ -572,10 +575,11 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
             if image.dtype != np.uint8:
                 image = np.clip(image * 255.0, 0, 255).astype(np.uint8)
 
-
             payload = {
                 "image": image,
                 "instruction": str(task_descriptions[idx]),
+                "critic_client_id": self._critic_client_id,
+                "env_index": idx,
             }
 
             response = session.post(

@@ -27,5 +27,5 @@ init_params:
     height: 512
     width: 512
   wrist_cam:
-    height: 256
-    width: 256
+    height: 512
+    width: 512
