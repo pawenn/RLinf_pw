@@ -102,5 +102,9 @@ class IsaaclabStackCubeEnv(IsaaclabBaseEnv):
             "task_descriptions": instruction,
             "states": states,
             "wrist_images": wrist_image,
+            "episode_ids": self._episode_ids.clone(),
+            "episode_steps": self._episode_steps.clone(),
+            "dones": self._last_dones.clone(),
+            "resets": self._last_resets.clone(),
         }
         return env_obs

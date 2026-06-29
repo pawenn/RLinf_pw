@@ -22,7 +22,7 @@ init_params:
   id: "Isaac-Stack-Cubes-Into-Box-Franka-IK-Rel-Visuomotor-Rewarded-v0"
   num_envs: null
   max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
-  task_description: "Put the cubes into the box in this order: blue cube first, red cube second, green cube third, and yellow cube fourth."
+  task_description: "Put the red cube into the basket."
   table_cam:
     height: 512
     width: 512

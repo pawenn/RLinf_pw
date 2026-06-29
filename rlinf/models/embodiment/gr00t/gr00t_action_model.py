@@ -548,6 +548,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
     def get_value_from_seperate_critic_model(
         self,
         env_obs: dict[str, Any],
+        mode: Literal["train", "eval"] = "train",
     ) -> torch.Tensor:
         critic_server_url = self.action_head.rl_config.critic_server_url
         critic_request_timeout = getattr(
@@ -557,14 +558,27 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         main_images = env_obs["main_images"]
         wrist_images = env_obs["wrist_images"]
         task_descriptions = env_obs["task_descriptions"]
-        print(env_obs)
-        quit()
+        episode_ids = env_obs.get("episode_ids")
+        episode_steps = env_obs.get("episode_steps")
+        dones = env_obs.get("dones")
+        resets = env_obs.get("resets")
+
         if isinstance(main_images, torch.Tensor):
             main_images = main_images.detach().cpu().numpy()
         if isinstance(wrist_images, torch.Tensor):
             wrist_images = wrist_images.detach().cpu().numpy()
         if isinstance(task_descriptions, str):
             task_descriptions = [task_descriptions]
+
+        def optional_indexed_value(values, index: int):
+            if values is None:
+                return None
+            if isinstance(values, torch.Tensor):
+                values = values.detach().cpu().numpy()
+            value = values[index]
+            if isinstance(value, np.generic):
+                return value.item()
+            return value
 
         values = []
         session = self._get_critic_session()
@@ -580,7 +594,20 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
                 "instruction": str(task_descriptions[idx]),
                 "critic_client_id": self._critic_client_id,
                 "env_index": idx,
+                "rollout_mode": mode,
             }
+            episode_id = optional_indexed_value(episode_ids, idx)
+            episode_step = optional_indexed_value(episode_steps, idx)
+            done = optional_indexed_value(dones, idx)
+            reset = optional_indexed_value(resets, idx)
+            if episode_id is not None:
+                payload["episode_id"] = int(episode_id)
+            if episode_step is not None:
+                payload["episode_step"] = int(episode_step)
+            if done is not None:
+                payload["done"] = bool(done)
+            if reset is not None:
+                payload["reset"] = bool(reset)
 
             response = session.post(
                 critic_server_url,
@@ -788,7 +815,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         if getattr(self.action_head.rl_config, "use_seperate_critic_model", False):
             if env_obs is None:
                 raise ValueError("Separate critic requires raw `env_obs`.")
-            prev_values = self.get_value_from_seperate_critic_model(env_obs)
+            prev_values = self.get_value_from_seperate_critic_model(env_obs, mode=mode)
         else:
             prev_values = rlinf_outputs["prev_values"]
 

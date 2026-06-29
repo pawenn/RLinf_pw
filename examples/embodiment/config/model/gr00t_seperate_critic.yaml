@@ -36,7 +36,7 @@ rl_head_config:
   value_vlm_mode: "mean_token"
   padding_value: 570
   critic_type: "siggemma_server"
-  critic_server_url: "http://gpu-20-n005:8002/act"
+  critic_server_url: "http://gpu-25-n001:8002/act"
   critic_request_timeout: 120.0
   critic_image_mode: "concat_libero"
   critic_module_path: "/bigwork/nhkbwenn/vlm/models/sig_gemma_vlm.py"

@@ -59,6 +59,7 @@ class IsaaclabBaseEnv(gym.Env):
         self._elapsed_steps = torch.zeros(self.num_envs, dtype=torch.int32).to(
             self.device
         )
+        self._init_episode_tracking()
         self.ignore_terminations = cfg.ignore_terminations
 
     def _make_env_function(self):
@@ -68,6 +69,36 @@ class IsaaclabBaseEnv(gym.Env):
         env_fn = self._make_env_function()
         self.env = SubProcIsaacLabEnv(env_fn)
         self.env.reset(seed=self.seed)
+
+    def _init_episode_tracking(self):
+        self._episode_ids = torch.zeros(self.num_envs, dtype=torch.long).to(
+            self.device
+        )
+        self._episode_steps = torch.zeros(self.num_envs, dtype=torch.long).to(
+            self.device
+        )
+        self._last_dones = torch.zeros(self.num_envs, dtype=torch.bool).to(self.device)
+        self._last_resets = torch.ones(self.num_envs, dtype=torch.bool).to(self.device)
+
+    def _reset_episode_tracking(self, env_ids=None):
+        if env_ids is None:
+            self._episode_ids += 1
+            self._episode_steps[:] = 0
+            self._last_dones[:] = False
+            self._last_resets[:] = True
+            return
+
+        env_ids = env_ids.to(self.device)
+        self._episode_ids[env_ids] += 1
+        self._episode_steps[env_ids] = 0
+        self._last_dones[env_ids] = False
+        self._last_resets[:] = False
+        self._last_resets[env_ids] = True
+
+    def _update_episode_tracking_after_step(self, dones):
+        self._episode_steps += 1
+        self._last_dones = dones.clone().to(self.device)
+        self._last_resets[:] = False
 
     def _init_metrics(self):
         self.success_once = torch.zeros(self.num_envs, dtype=bool).to(self.device)
@@ -112,6 +143,7 @@ class IsaaclabBaseEnv(gym.Env):
         else:
             obs, _ = self.env.reset(seed=seed, env_ids=env_ids)
         infos = {}
+        self._reset_episode_tracking(env_ids)
         obs = self._wrap_obs(obs)
         self._reset_metrics(env_ids)
         return obs, infos
@@ -123,13 +155,14 @@ class IsaaclabBaseEnv(gym.Env):
         terminations = terminations.clone()
         truncations = truncations.clone()
 
-        obs = self._wrap_obs(obs)
-
         self._elapsed_steps += 1
 
         truncations = (self.elapsed_steps >= self.cfg.max_episode_steps) | truncations
 
         dones = terminations | truncations
+        self._update_episode_tracking_after_step(dones)
+
+        obs = self._wrap_obs(obs)
 
         infos = self._record_metrics(
             step_reward, terminations, {}
